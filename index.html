@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>الدكتور في الأحياء - المنصة التعليمية</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body { font-family: 'Cairo', sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // ==========================================
+    // قاعدة بيانات المتصفح الدائمة لحفظ الفيديوهات (IndexedDB)
+    // ==========================================
+    const DB_NAME = 'DrBiologyVideosDB';
+    const STORE_NAME = 'videos';
+
+    function openVideoDB() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, 1);
+        request.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME);
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    }
+
+    async function saveVideoBlob(id, fileBlob) {
+      const db = await openVideoDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).put(fileBlob, id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    async function getVideoBlobUrl(id) {
+      const db = await openVideoDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const req = tx.objectStore(STORE_NAME).get(id);
+        req.onsuccess = () => {
+          if (req.result) {
+            resolve(URL.createObjectURL(req.result));
+          } else {
+            resolve(null);
+          }
+        };
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    // تحويل روابط يوتيوب العادية إلى روابط تشغيل (Embed) تلقائياً
+    function formatVideoEmbedUrl(url) {
+      if (!url) return '';
+      if (url.includes('youtube.com/watch?v=')) {
+        const videoId = url.split('v=')[1]?.split('&')[0];
+        return `https://www.youtube.com/embed/${videoId}`;
+      }
+      if (url.includes('youtu.be/')) {
+        const videoId = url.split('youtu.be/')[1]?.split('?')[0];
+        return `https://www.youtube.com/embed/${videoId}`;
+      }
+      return url;
+    }
+
+    // أيقونات SVG
+    const IconDna = () => <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M2 15c6.667-6 13.333 0 20-6M9 22c1.798-1.998 2.518-3.995 2.807-5.993M15 2c-1.798 1.998-2.518 3.995-2.807 5.993M17 6l-2.5-2.5M14 8l-1-1M7 18l2.5 2.5M3.5 14.5l.5.5M20 9l.5.5M6.5 12.5l1 1M16.5 10.5l1 1M10 16l1.5 1.5"/></svg>;
+    const IconLock = () => <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>;
+    const IconPlay = () => <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>;
+    const IconUpload = () => <svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>;
+    const IconTrash = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>;
+
+    const STORAGE_KEYS = {
+      COURSES: 'dr_bio_html_courses_v3',
+      STUDENTS: 'dr_bio_html_students_v3',
+      REQUESTS: 'dr_bio_html_requests_v3',
+      CODES: 'dr_bio_html_codes_v3',
+      SETTINGS: 'dr_bio_html_settings_v3',
+      CURRENT_STUDENT: 'dr_bio_html_current_student_v3'
+    };
+
+    const DEFAULT_SETTINGS = {
+      adminPin: '123456',
+      walletNumber: '01000000000',
+      paymentInstructions: 'قم بتحويل مبلغ الكورس على رقم فودافون كاش أو إنستا باي أعلاه، ثم أدخل رقم الهاتف المحول منه لتفعيل الكورس.'
+    };
+
+    // مكون مشغل الفيديو الذكي (يقرأ من الذاكرة الدائمة IndexedDB أو الروابط)
+    function SmartVideoPlayer({ lesson }) {
+      const [playableUrl, setPlayableUrl] = useState(null);
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        let isMounted = true;
+        setLoading(true);
+        if (lesson.isLocalFile && lesson.videoDbId) {
+          getVideoBlobUrl(lesson.videoDbId).then(url => {
+            if (isMounted) {
+              setPlayableUrl(url);
+              setLoading(false);
+            }
+          });
+        } else {
+          setPlayableUrl(formatVideoEmbedUrl(lesson.videoUrl));
+          setLoading(false);
+        }
+        return () => { isMounted = false; };
+      }, [lesson]);
+
+      if (loading) {
+        return <div className="bg-slate-900 text-white aspect-video rounded-xl flex items-center justify-center text-sm">جاري تحميل الفيديو...</div>;
+      }
+
+      if (!playableUrl) {
+        return <div className="bg-red-950 text-red-200 aspect-video rounded-xl flex items-center justify-center text-sm p-4 text-center">تعذر العثور على ملف الفيديو. يرجى إعادة رفعه من لوحة المدرس.</div>;
+      }
+
+      return (
+        <div className="bg-black rounded-xl overflow-hidden aspect-video">
+          {lesson.isLocalFile ? (
+            <video key={playableUrl} src={playableUrl} controls playsInline className="w-full h-full" />
+          ) : (
+            <iframe key={playableUrl} src={playableUrl} className="w-full h-full" allowFullScreen></iframe>
+          )}
+        </div>
+      );
+    }
+
+    function App() {
+      const [isAdminRoute, setIsAdminRoute] = useState(false);
+      const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+      const [pinInput, setPinInput] = useState('');
+      const [pinError, setPinError] = useState('');
+      const [footerClicks, setFooterClicks] = useState(0);
+
+      const [courses, setCourses] = useState(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.COURSES)) || []);
+      const [students, setStudents] = useState(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.STUDENTS)) || []);
+      const [requests, setRequests] = useState(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.REQUESTS)) || []);
+      const [promoCodes, setPromoCodes] = useState(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.CODES)) || []);
+      const [settings, setSettings] = useState(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.SETTINGS)) || DEFAULT_SETTINGS);
+      const [currentStudentId, setCurrentStudentId] = useState(() => localStorage.getItem(STORAGE_KEYS.CURRENT_STUDENT) || null);
+
+      useEffect(() => localStorage.setItem(STORAGE_KEYS.COURSES, JSON.stringify(courses)), [courses]);
+      useEffect(() => localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(students)), [students]);
+      useEffect(() => localStorage.setItem(STORAGE_KEYS.REQUESTS, JSON.stringify(requests)), [requests]);
+      useEffect(() => localStorage.setItem(STORAGE_KEYS.CODES, JSON.stringify(promoCodes)), [promoCodes]);
+      useEffect(() => localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings)), [settings]);
+      useEffect(() => {
+        if (currentStudentId) localStorage.setItem(STORAGE_KEYS.CURRENT_STUDENT, currentStudentId);
+        else localStorage.removeItem(STORAGE_KEYS.CURRENT_STUDENT);
+      }, [currentStudentId]);
+
+      useEffect(() => {
+        const checkRoute = () => {
+          if (window.location.hash === '#/admin' || window.location.search.includes('admin=true')) {
+            setIsAdminRoute(true);
+          } else {
+            setIsAdminRoute(false);
+          }
+        };
+        checkRoute();
+        window.addEventListener('hashchange', checkRoute);
+
+        const handleKeyDown = (e) => {
+          if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
+            e.preventDefault();
+            window.location.hash = '#/admin';
+            setIsAdminRoute(true);
+          }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+
+        return () => {
+          window.removeEventListener('hashchange', checkRoute);
+          window.removeEventListener('keydown', handleKeyDown);
+        };
+      }, []);
+
+      const handleFooterSecretClick = () => {
+        const next = footerClicks + 1;
+        if (next >= 5) {
+          window.location.hash = '#/admin';
+          setIsAdminRoute(true);
+          setFooterClicks(0);
+        } else {
+          setFooterClicks(next);
+        }
+      };
+
+      const currentStudent = students.find(s => s.id === currentStudentId) || null;
+
+      if (isAdminRoute) {
+        if (!isAdminAuthenticated) {
+          return (
+            <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-8 text-center">
+                <div className="w-16 h-16 bg-emerald-100 text-emerald-700 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <IconDna />
+                </div>
+                <h1 className="text-2xl font-extrabold text-slate-800 mb-2">لوحة تحكم الدكتور في الأحياء</h1>
+                <p className="text-slate-500 text-sm mb-6">منطقة محمية خاصة بالمدرس فقط. أدخل الرمز السري للمتابعة.</p>
+                
+                <form onSubmit={(e) => {
+                  e.preventDefault();
+                  if (pinInput === settings.adminPin) {
+                    setIsAdminAuthenticated(true);
+                    setPinError('');
+                    setPinInput('');
+                  } else {
+                    setPinError('الرمز السري غير صحيح!');
+                  }
+                }} className="space-y-4">
+                  <input
+                    type="password"
+                    placeholder="الرمز السري (الافتراضي: 123456)"
+                    value={pinInput}
+                    onChange={(e) => setPinInput(e.target.value)}
+                    className="w-full px-4 py-3 border border-slate-300 rounded-xl text-center text-lg tracking-widest outline-none focus:border-emerald-600"
+                  />
+                  {pinError && <p className="text-red-600 text-sm font-bold">{pinError}</p>}
+                  <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl transition">
+                    دخول لوحة الإدارة
+                  </button>
+                </form>
+
+                <button 
+                  onClick={() => { window.location.hash = ''; setIsAdminRoute(false); }}
+                  className="mt-6 text-sm text-slate-400 hover:text-slate-600 underline"
+                >
+                  العودة إلى واجهة الطلاب
+                </button>
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <AdminDashboard 
+            courses={courses} setCourses={setCourses}
+            students={students} setStudents={setStudents}
+            requests={requests} setRequests={setRequests}
+            promoCodes={promoCodes} setPromoCodes={setPromoCodes}
+            settings={settings} setSettings={setSettings}
+            onLogout={() => {
+              setIsAdminAuthenticated(false);
+              window.location.hash = '';
+              setIsAdminRoute(false);
+            }}
+          />
+        );
+      }
+
+      return (
+        <StudentPortal
+          courses={courses}
+          students={students} setStudents={setStudents}
+          currentStudent={currentStudent} setCurrentStudentId={setCurrentStudentId}
+          requests={requests} setRequests={setRequests}
+          promoCodes={promoCodes} setPromoCodes={setPromoCodes}
+          settings={settings}
+          onFooterSecretClick={handleFooterSecretClick}
+        />
+      );
+    }
+
+    function AdminDashboard({ courses, setCourses, students, setStudents, requests, setRequests, promoCodes, setPromoCodes, settings, setSettings, onLogout }) {
+      const [activeTab, setActiveTab] = useState('courses');
+      
+      const [courseTitle, setCourseTitle] = useState('');
+      const [courseGrade, setCourseGrade] = useState('الصف الثالث الثانوي');
+      const [courseDesc, setCourseDesc] = useState('');
+      const [isFree, setIsFree] = useState(false);
+      const [coursePrice, setCoursePrice] = useState('');
+
+      const [selectedCourseId, setSelectedCourseId] = useState('');
+      const [lessonTitle, setLessonTitle] = useState('');
+      const [videoSourceType, setVideoSourceType] = useState('file');
+      const [videoUrl, setVideoUrl] = useState('');
+      const [selectedFile, setSelectedFile] = useState(null);
+      const [isUploading, setIsUploading] = useState(false);
+      const [pdfUrl, setPdfUrl] = useState('');
+      const [isPreviewFree, setIsPreviewFree] = useState(false);
+
+      const [examCourseId, setExamCourseId] = useState('');
+      const [examTitle, setExamTitle] = useState('');
+      const [questions, setQuestions] = useState([]);
+      const [qText, setQText] = useState('');
+      const [qOptions, setQOptions] = useState(['', '', '', '']);
+      const [qCorrect, setQCorrect] = useState(0);
+      const [qExplanation, setQExplanation] = useState('');
+
+      const [codeCourseId, setCodeCourseId] = useState('');
+      const [codeCount, setCodeCount] = useState(1);
+
+      const handleAddCourse = (e) => {
+        e.preventDefault();
+        if (!courseTitle.trim()) return;
+        setCourses([...courses, {
+          id: Date.now().toString(),
+          title: courseTitle,
+          grade: courseGrade,
+          description: courseDesc,
+          price: isFree ? 0 : Number(coursePrice) || 0,
+          lessons: [],
+          exams: []
+        }]);
+        setCourseTitle('');
+        setCourseDesc('');
+        setCoursePrice('');
+        alert('تم نشر الكورس بنجاح!');
+      };
+
+      const handleAddLesson = async (e) => {
+        e.preventDefault();
+        if (!selectedCourseId || !lessonTitle) {
+          alert('يرجى اختيار الكورس وإدخال عنوان الدرس.');
+          return;
+        }
+        if (videoSourceType === 'file' && !selectedFile) {
+          alert('يرجى اختيار ملف فيديو من جهازك.');
+          return;
+        }
+        if (videoSourceType === 'url' && !videoUrl.trim()) {
+          alert('يرجى إدخال رابط الفيديو.');
+          return;
+        }
+
+        setIsUploading(true);
+        const lessonId = Date.now().toString();
+        let videoDbId = null;
+
+        try {
+          if (videoSourceType === 'file') {
+            videoDbId = `vid_${lessonId}`;
+            await saveVideoBlob(videoDbId, selectedFile);
+          }
+
+          setCourses(courses.map(c => c.id === selectedCourseId ? {
+            ...c,
+            lessons: [...c.lessons, {
+              id: lessonId,
+              title: lessonTitle,
+              videoUrl: videoSourceType === 'url' ? videoUrl.trim() : '',
+              videoDbId,
+              isLocalFile: videoSourceType === 'file',
+              pdfUrl,
+              isPreviewFree
+            }]
+          } : c));
+
+          setLessonTitle('');
+          setVideoUrl('');
+          setSelectedFile(null);
+          setPdfUrl('');
+          alert('تم حفظ الفيديو وإضافة المحاضرة بنجاح!');
+        } catch (err) {
+          alert('حدث خطأ أثناء حفظ الفيديو في المتصفح: ' + err.message);
+        } finally {
+          setIsUploading(false);
+        }
+      };
+
+      const handleAddQuestion = () => {
+        if (!qText.trim() || qOptions.some(o => !o.trim())) {
+          alert('اكتب نص السؤال وجميع الاختيارات الأربعة.');
+          return;
+        }
+        setQuestions([...questions, {
+          id: Date.now().toString(),
+          text: qText,
+          options: [...qOptions],
+          correctIndex: Number(qCorrect),
+          explanation: qExplanation
+        }]);
+        setQText('');
+        setQOptions(['', '', '', '']);
+        setQCorrect(0);
+        setQExplanation('');
+      };
+
+      const handleSaveExam = (e) => {
+        e.preventDefault();
+        if (!examCourseId || !examTitle || questions.length === 0) {
+          alert('اختر الكورس واكتب عنوان الامتحان وأضف سؤالاً واحداً على الأقل.');
+          return;
+        }
+        setCourses(courses.map(c => c.id === examCourseId ? {
+          ...c,
+          exams: [...c.exams, { id: Date.now().toString(), title: examTitle, questions }]
+        } : c));
+        setExamTitle('');
+        setQuestions([]);
+        alert('تم حفظ ونشر الامتحان بنجاح!');
+      };
+
+      const handleApproveRequest = (req) => {
+        setStudents(students.map(s => {
+          if (s.id === req.studentId) {
+            const enrolled = s.enrolledCourses || [];
+            if (!enrolled.includes(req.courseId)) {
+              return { ...s, enrolledCourses: [...enrolled, req.courseId] };
+            }
+          }
+          return s;
+        }));
+        setRequests(requests.map(r => r.id === req.id ? { ...r, status: 'approved' } : r));
+      };
+
+      const handleGenerateCodes = () => {
+        if (!codeCourseId) { alert('اختر الكورس أولاً'); return; }
+        const newCodes = [];
+        for (let i = 0; i < codeCount; i++) {
+          const rand = Math.random().toString(36).substring(2, 7).toUpperCase();
+          newCodes.push({ code: `BIO-${rand}`, courseId: codeCourseId, used: false });
+        }
+        setPromoCodes([...newCodes, ...promoCodes]);
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-50">
+          <header className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between shadow-md">
+            <div className="flex items-center gap-3">
+              <div className="bg-emerald-600 p-2 rounded-xl"><IconDna /></div>
+              <div>
+                <h1 className="font-bold text-lg">لوحة تحكم الدكتور في الأحياء</h1>
+                <p className="text-xs text-slate-400">إدارة المحتوى والطلاب والاشتراكات</p>
+              </div>
+            </div>
+            <button onClick={onLogout} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl text-xs font-bold">
+              خروج من الإدارة
+            </button>
+          </header>
+
+          <div className="max-w-6xl mx-auto p-6">
+            <div className="flex flex-wrap gap-2 mb-6 bg-white p-2 rounded-2xl shadow-sm border">
+              {[
+                { id: 'courses', label: '1. الكورسات والأسعار' },
+                { id: 'videos', label: '2. رفع الفيديوهات' },
+                { id: 'exams', label: '3. الامتحانات' },
+                { id: 'payments', label: `4. الدفع والأكواد (${requests.filter(r => r.status === 'pending').length})` },
+                { id: 'students', label: `5. متابعة الطلاب (${students.length})` }
+              ].map(t => (
+                <button key={t.id} onClick={() => setActiveTab(t.id)} className={`px-4 py-2.5 rounded-xl text-sm font-bold transition ${activeTab === t.id ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {activeTab === 'courses' && (
+              <div className="grid md:grid-cols-3 gap-6">
+                <form onSubmit={handleAddCourse} className="bg-white p-6 rounded-2xl shadow-sm border space-y-4 h-fit">
+                  <h2 className="font-bold text-lg border-b pb-2">إضافة كورس جديد</h2>
+                  <div>
+                    <label className="block text-xs font-bold mb-1">اسم الكورس</label>
+                    <input type="text" required placeholder="مثال: الباب الأول - الدعامة والحركة" value={courseTitle} onChange={e => setCourseTitle(e.target.value)} className="w-full p-2.5 border rounded-xl text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold mb-1">الصف الدراسي</label>
+                    <select value={courseGrade} onChange={e => setCourseGrade(e.target.value)} className="w-full p-2.5 border rounded-xl text-sm bg-white">
+                      <option>الصف الأول الثانوي</option>
+                      <option>الصف الثاني الثانوي</option>
+                      <option>الصف الثالث الثانوي</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold mb-1">وصف الكورس</label>
+                    <textarea rows="2" value={courseDesc} onChange={e => setCourseDesc(e.target.value)} className="w-full p-2.5 border rounded-xl text-sm" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="freeChk" checked={isFree} onChange={e => setIsFree(e.target.checked)} className="w-4 h-4 accent-emerald-600" />
+                    <label htmlFor="freeChk" className="text-sm font-bold text-emerald-700">كورس مجاني</label>
+                  </div>
+                  {!isFree && (
+                    <div>
+                      <label className="block text-xs font-bold mb-1">سعر الكورس (جنيه)</label>
+                      <input type="number" required min="1" placeholder="150" value={coursePrice} onChange={e => setCoursePrice(e.target.value)} className="w-full p-2.5 border rounded-xl text-sm" />
+                    </div>
+                  )}
+                  <button type="submit" className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl">نشر الكورس</button>
+                </form>
+
+                <div className="md:col-span-2 space-y-3">
+                  <h2 className="font-bold text-lg">الكورسات الحالية ({courses.length})</h2>
+                  {courses.length === 0 ? (
+                    <div className="bg-white p-12 rounded-2xl border border-dashed text-center text-slate-400">لا توجد كورسات مضافة بعد.</div>
+                  ) : courses.map(c => (
+                    <div key={c.id} className="bg-white p-5 rounded-2xl shadow-sm border flex items-center justify-between">
+                      <div>
+                        <span className="text-xs bg-emerald-100 text-emerald-800 font-bold px-2.5 py-0.5 rounded-full ml-2">{c.grade}</span>
+                        <span className="text-xs bg-amber-100 text-amber-800 font-bold px-2.5 py-0.5 rounded-full">{c.price === 0 ? 'مجاني' : `${c.price} ج.م`}</span>
+                        <h3 className="font-bold text-lg mt-1">{c.title}</h3>
+                        <p className="text-xs text-slate-500">{c.lessons.length} محاضرات • {c.exams.length} امتحانات</p>
+                      </div>
+                      <button onClick={() => setCourses(courses.filter(item => item.id !== c.id))} className="text-red-500 p-2 hover:bg-red-50 rounded-xl"><IconTrash /></button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'videos' && (
+              <div className="max-w-2xl mx-auto bg-white p-6 rounded-2xl shadow-sm border space-y-4">
+                <h2 className="font-bold text-lg border-b pb-2">إضافة فيديو محاضرة</h2>
+                <form onSubmit={handleAddLesson} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold mb-1">اختر الكورس</label>
+                    <select required value={selectedCourseId} onChange={e => setSelectedCourseId(e.target.value)} className="w-full p-2.5 border rounded-xl text-sm bg-white">
+                      <option value="">-- اختر الكورس --</option>
+                      {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold mb-1">عنوان المحاضرة</label>
+                    <input type="text" required placeholder="مثال: المحاضرة الأولى" value={lessonTitle} onChange={e => setLessonTitle(e.target.value)} className="w-full p-2.5 border rounded-xl text-sm" />
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-xl border space-y-3">
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => { setVideoSourceType('file'); setVideoUrl(''); }} className={`flex-1 py-2 rounded-lg text-xs font-bold border ${videoSourceType === 'file' ? 'bg-emerald-600 text-white' : 'bg-white'}`}>
+                        رفع فيديو من جهازي (حفظ دائم)
+                      </button>
+                      <button type="button" onClick={() => { setVideoSourceType('url'); setSelectedFile(null); }} className={`flex-1 py-2 rounded-lg text-xs font-bold border ${videoSourceType === 'url' ? 'bg-emerald-600 text-white' : 'bg-white'}`}>
+                        رابط يوتيوب / خارجي
+                      </button>
+                    </div>
+                    {videoSourceType === 'file' ? (
+                      <label className="flex flex-col items-center justify-center border-2 border-dashed border-emerald-400 rounded-xl p-6 bg-white cursor-pointer hover:bg-emerald-50">
+                        <IconUpload />
+                        <span className="text-xs font-bold mt-2 text-center">
+                          {selectedFile ? `تم اختيار: ${selectedFile.name}` : 'اضغط لاختيار ملف فيديو (MP4) من جهازك'}
+                        </span>
+                        <input type="file" accept="video/*" onChange={(e) => setSelectedFile(e.target.files[0])} className="hidden" />
+                      </label>
+                    ) : (
+                      <input type="url" placeholder="ضع رابط يوتيوب أو رابط الفيديو المباشر هنا" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} className="w-full p-2.5 border rounded-xl text-sm bg-white" />
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold mb-1">رابط ملزمة PDF (اختياري)</label>
+                    <input type="url" placeholder="https://..." value={pdfUrl} onChange={e => setPdfUrl(e.target.value)} className="w-full p-2.5 border rounded-xl text-sm" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="prevFree" checked={isPreviewFree} onChange={e => setIsPreviewFree(e.target.checked)} className="w-4 h-4 accent-emerald-600" />
+                    <label htmlFor="prevFree" className="text-xs font-bold">متاح كحصة تجريبية مجانية</label>
+                  </div>
+                  <button disabled={isUploading} type="submit" className="w-full bg-emerald-600 disabled:bg-slate-400 text-white font-bold py-3 rounded-xl">
+                    {isUploading ? 'جاري حفظ الفيديو...' : 'إضافة المحاضرة'}
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {activeTab === 'exams' && (
+              <div className="max-w-3xl mx-auto bg-white p-6 rounded-2xl shadow-sm border space-y-4">
+                <h2 className="font-bold text-lg border-b pb-2">إنشاء امتحان جديد</h2>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <select value={examCourseId} onChange={e => setExamCourseId(e.target.value)} className="p-2.5 border rounded-xl text-sm bg-white">
+                    <option value="">-- اختر الكورس --</option>
+                    {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                  </select>
+                  <input type="text" placeholder="عنوان الامتحان..." value={examTitle} onChange={e => setExamTitle(e.target.value)} className="p-2.5 border rounded-xl text-sm" />
+                </div>
+                <div className="bg-slate-50 p-4 rounded-xl border space-y-3">
+                  <input type="text" placeholder="نص السؤال..." value={qText} onChange={e => setQText(e.target.value)} className="w-full p-2.5 border rounded-xl text-sm bg-white" />
+                  <div className="grid md:grid-cols-2 gap-2">
+                    {qOptions.map((opt, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <input type="radio" name="correctOpt" checked={qCorrect === idx} onChange={() => setQCorrect(idx)} className="accent-emerald-600" />
+                        <input type="text" placeholder={`الاختيار ${idx + 1}`} value={opt} onChange={e => { const copy = [...qOptions]; copy[idx] = e.target.value; setQOptions(copy); }} className="w-full p-2 border rounded-lg text-sm bg-white" />
+                      </div>
+                    ))}
+                  </div>
+                  <input type="text" placeholder="تفسير الإجابة الصحيحة (اختياري)..." value={qExplanation} onChange={e => setQExplanation(e.target.value)} className="w-full p-2 border rounded-lg text-sm bg-white" />
+                  <button type="button" onClick={handleAddQuestion} className="bg-slate-800 text-white px-4 py-2 rounded-xl text-xs font-bold">
+                    + إدراج السؤال ({questions.length} أسئلة مضافة)
+                  </button>
+                </div>
+                <button onClick={handleSaveExam} className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl">حفظ ونشر الامتحان</button>
+              </div>
+            )}
+
+            {activeTab === 'payments' && (
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
+                  <h2 className="font-bold text-lg border-b pb-2">إعدادات المحفظة والرقم السري</h2>
+                  <div>
+                    <label className="block text-xs font-bold mb-1">رقم فودافون كاش / إنستا باي</label>
+                    <input type="text" value={settings.walletNumber} onChange={e => setSettings({ ...settings, walletNumber: e.target.value })} className="w-full p-2.5 border rounded-xl text-sm font-mono" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold mb-1">تعليمات التحويل للطلاب</label>
+                    <textarea rows="2" value={settings.paymentInstructions} onChange={e => setSettings({ ...settings, paymentInstructions: e.target.value })} className="w-full p-2.5 border rounded-xl text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold mb-1">الرمز السري للوحة الإدارة (PIN)</label>
+                    <input type="text" value={settings.adminPin} onChange={e => setSettings({ ...settings, adminPin: e.target.value })} className="w-full p-2.5 border rounded-xl text-sm font-mono" />
+                  </div>
+                </div>
+
+                <div className="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
+                  <h2 className="font-bold text-lg border-b pb-2">توليد أكواد تفعيل</h2>
+                  <div className="flex gap-2">
+                    <select value={codeCourseId} onChange={e => setCodeCourseId(e.target.value)} className="flex-1 p-2.5 border rounded-xl text-sm bg-white">
+                      <option value="">-- اختر الكورس --</option>
+                      {courses.filter(c => c.price > 0).map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                    </select>
+                    <input type="number" min="1" max="50" value={codeCount} onChange={e => setCodeCount(Number(e.target.value))} className="w-16 p-2.5 border rounded-xl text-sm text-center" />
+                    <button onClick={handleGenerateCodes} className="bg-emerald-600 text-white px-4 rounded-xl font-bold text-xs">توليد</button>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto space-y-2">
+                    {promoCodes.map((c, i) => (
+                      <div key={i} className="flex justify-between bg-slate-50 px-3 py-2 rounded-lg border text-xs">
+                        <span className="font-mono font-bold text-emerald-700">{c.code}</span>
+                        <span className={c.used ? 'text-red-600 font-bold' : 'text-emerald-600 font-bold'}>{c.used ? 'مستخدم' : 'متاح'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="md:col-span-2 bg-white p-6 rounded-2xl shadow-sm border">
+                  <h2 className="font-bold text-lg mb-4">طلبات الاشتراك ({requests.length})</h2>
+                  {requests.length === 0 ? <p className="text-slate-400 text-sm">لا توجد طلبات تحويل حالياً.</p> : (
+                    <div className="space-y-3">
+                      {requests.map(req => (
+                        <div key={req.id} className="flex flex-wrap items-center justify-between p-4 rounded-xl border bg-slate-50 gap-4">
+                          <div>
+                            <p className="font-bold">{req.studentName} ({req.studentPhone})</p>
+                            <p className="text-xs text-emerald-700 font-bold">الكورس: {req.courseTitle} — المبلغ: {req.amount} ج.م</p>
+                            <p className="text-xs text-slate-600">الرقم المحول منه: <span className="font-mono font-bold">{req.senderPhone}</span></p>
+                          </div>
+                          {req.status === 'pending' ? (
+                            <button onClick={() => handleApproveRequest(req)} className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-bold">
+                              تأكيد وتفعيل الكورس
+                            </button>
+                          ) : (
+                            <span className="bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full text-xs font-bold">تم التفعيل</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'students' && (
+              <div className="bg-white p-6 rounded-2xl shadow-sm border">
+                <h2 className="font-bold text-lg mb-4">الطلاب المسجلون ({students.length})</h2>
+                {students.length === 0 ? <p className="text-slate-400 text-sm text-center py-8">لا يوجد طلاب مسجلون بعد.</p> : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-right">
+                      <thead className="bg-slate-100">
+                        <tr>
+                          <th className="p-3">الاسم</th>
+                          <th className="p-3">الصف</th>
+                          <th className="p-3">الهاتف / ولي الأمر</th>
+                          <th className="p-3">نتائج الامتحانات</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {students.map(st => (
+                          <tr key={st.id}>
+                            <td className="p-3 font-bold">{st.name}</td>
+                            <td className="p-3">{st.grade}</td>
+                            <td className="p-3 font-mono text-xs">{st.phone} / {st.parentPhone}</td>
+                            <td className="p-3">
+                              {(st.examResults || []).map((r, idx) => (
+                                <span key={idx} className="inline-block bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded text-xs ml-1">
+                                  {r.examTitle}: {r.score}/{r.total}
+                                </span>
+                              ))}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function StudentPortal({ courses, students, setStudents, currentStudent, setCurrentStudentId, requests, setRequests, promoCodes, setPromoCodes, settings, onFooterSecretClick }) {
+      const [authMode, setAuthMode] = useState('login');
+      const [name, setName] = useState('');
+      const [phone, setPhone] = useState('');
+      const [parentPhone, setParentPhone] = useState('');
+      const [grade, setGrade] = useState('الصف الثالث الثانوي');
+
+      const [selectedCourse, setSelectedCourse] = useState(null);
+      const [activeLesson, setActiveLesson] = useState(null);
+      const [activeExam, setActiveExam] = useState(null);
+      const [examAnswers, setExamAnswers] = useState({});
+      const [examSubmitted, setExamSubmitted] = useState(false);
+
+      const [paymentModalCourse, setPaymentModalCourse] = useState(null);
+      const [senderPhone, setSenderPhone] = useState('');
+      const [redeemCodeInput, setRedeemCodeInput] = useState('');
+
+      const handleAuth = (e) => {
+        e.preventDefault();
+        if (authMode === 'login') {
+          const found = students.find(s => s.phone === phone.trim());
+          if (found) setCurrentStudentId(found.id);
+          else alert('رقم الهاتف غير مسجل. يرجى إنشاء حساب جديد.');
+        } else {
+          if (students.some(s => s.phone === phone.trim())) { alert('هذا الرقم مسجل بالفعل.'); return; }
+          const newSt = { id: Date.now().toString(), name, phone: phone.trim(), parentPhone: parentPhone.trim(), grade, enrolledCourses: [], examResults: [] };
+          setStudents([...students, newSt]);
+          setCurrentStudentId(newSt.id);
+        }
+      };
+
+      const handleEnrollClick = (course) => {
+        if (course.price === 0) {
+          setStudents(students.map(s => s.id === currentStudent.id ? { ...s, enrolledCourses: [...(s.enrolledCourses || []), course.id] } : s));
+          alert('تم الاشتراك في الكورس المجاني بنجاح!');
+        } else {
+          setPaymentModalCourse(course);
+        }
+      };
+
+      const handleSubmitTransfer = (e) => {
+        e.preventDefault();
+        setRequests([{
+          id: Date.now().toString(),
+          studentId: currentStudent.id,
+          studentName: currentStudent.name,
+          studentPhone: currentStudent.phone,
+          courseId: paymentModalCourse.id,
+          courseTitle: paymentModalCourse.title,
+          amount: paymentModalCourse.price,
+          senderPhone: senderPhone.trim(),
+          status: 'pending'
+        }, ...requests]);
+        setSenderPhone('');
+        setPaymentModalCourse(null);
+        alert('تم إرسال بيانات التحويل للدكتور! سيتم التفعيل فور المراجعة.');
+      };
+
+      const handleRedeemCode = (e) => {
+        e.preventDefault();
+        const foundCode = promoCodes.find(c => c.code === redeemCodeInput.trim().toUpperCase() && !c.used && c.courseId === paymentModalCourse.id);
+        if (!foundCode) { alert('الكود غير صحيح أو مستخدم.'); return; }
+        setPromoCodes(promoCodes.map(c => c.code === foundCode.code ? { ...c, used: true } : c));
+        setStudents(students.map(s => s.id === currentStudent.id ? { ...s, enrolledCourses: [...(s.enrolledCourses || []), paymentModalCourse.id] } : s));
+        setRedeemCodeInput('');
+        setPaymentModalCourse(null);
+        alert('تم تفعيل الكورس بنجاح!');
+      };
+
+      const handleFinishExam = () => {
+        let score = 0;
+        activeExam.questions.forEach((q, i) => { if (examAnswers[i] === q.correctIndex) score++; });
+        setExamSubmitted(true);
+        setStudents(students.map(s => s.id === currentStudent.id ? {
+          ...s, examResults: [...(s.examResults || []), { examTitle: activeExam.title, score, total: activeExam.questions.length }]
+        } : s));
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col">
+          <nav className="bg-white border-b px-6 py-4 sticky top-0 z-30 shadow-sm">
+            <div className="max-w-6xl mx-auto flex items-center justify-between">
+              <div onClick={() => { setSelectedCourse(null); setActiveLesson(null); setActiveExam(null); }} className="flex items-center gap-3 cursor-pointer">
+                <div className="bg-emerald-600 p-2.5 rounded-xl text-white"><IconDna /></div>
+                <div>
+                  <h1 className="font-extrabold text-xl text-slate-900">الدكتور في الأحياء</h1>
+                  <p className="text-xs text-emerald-600 font-bold">المنصة التعليمية للثانوية العامة</p>
+                </div>
+              </div>
+              {currentStudent && (
+                <div className="flex items-center gap-3">
+                  <div className="text-left hidden sm:block">
+                    <p className="text-sm font-bold">{currentStudent.name}</p>
+                    <p className="text-xs text-slate-500">{currentStudent.grade}</p>
+                  </div>
+                  <button onClick={() => setCurrentStudentId(null)} className="bg-slate-100 hover:bg-red-50 text-slate-600 hover:text-red-600 px-3 py-2 rounded-xl text-xs font-bold">
+                    خروج
+                  </button>
+                </div>
+              )}
+            </div>
+          </nav>
+
+          <main className="flex-1 max-w-6xl w-full mx-auto p-6">
+            {!currentStudent ? (
+              <div className="grid md:grid-cols-2 gap-8 items-center py-8">
+                <div className="space-y-4">
+                  <span className="bg-emerald-100 text-emerald-800 text-xs font-bold px-3 py-1 rounded-full">أهلاً بك في عالم البيولوجي</span>
+                  <h2 className="text-3xl font-extrabold text-slate-900 leading-tight">افهم الأحياء صح، وتدرب على نظام الامتحانات الحديث</h2>
+                  <p className="text-slate-600">سجل حسابك الآن لمتابعة المحاضرات، تحميل المذكرات، وحل الاختبارات التفاعلية مع التصحيح الفوري.</p>
+                </div>
+
+                <div className="bg-white p-8 rounded-3xl shadow-lg border">
+                  <div className="flex gap-2 bg-slate-100 p-1 rounded-xl mb-6">
+                    <button onClick={() => setAuthMode('login')} className={`flex-1 py-2 rounded-lg text-sm font-bold ${authMode === 'login' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500'}`}>تسجيل الدخول</button>
+                    <button onClick={() => setAuthMode('register')} className={`flex-1 py-2 rounded-lg text-sm font-bold ${authMode === 'register' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500'}`}>حساب جديد</button>
+                  </div>
+
+                  <form onSubmit={handleAuth} className="space-y-4">
+                    {authMode === 'register' && (
+                      <>
+                        <input type="text" required placeholder="اسم الطالب ثلاثي" value={name} onChange={e => setName(e.target.value)} className="w-full p-3 border rounded-xl text-sm" />
+                        <select value={grade} onChange={e => setGrade(e.target.value)} className="w-full p-3 border rounded-xl text-sm bg-white">
+                          <option>الصف الأول الثانوي</option>
+                          <option>الصف الثاني الثانوي</option>
+                          <option>الصف الثالث الثانوي</option>
+                        </select>
+                      </>
+                    )}
+                    <input type="tel" required placeholder="رقم هاتف الطالب" value={phone} onChange={e => setPhone(e.target.value)} className="w-full p-3 border rounded-xl text-sm font-mono" />
+                    {authMode === 'register' && (
+                      <input type="tel" required placeholder="رقم هاتف ولي الأمر" value={parentPhone} onChange={e => setParentPhone(e.target.value)} className="w-full p-3 border rounded-xl text-sm font-mono" />
+                    )}
+                    <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl">
+                      {authMode === 'login' ? 'دخول للمنصة' : 'إنشاء الحساب'}
+                    </button>
+                  </form>
+                </div>
+              </div>
+            ) : activeExam ? (
+              <div className="bg-white p-6 rounded-3xl shadow-sm border max-w-3xl mx-auto">
+                <div className="flex justify-between border-b pb-4 mb-6">
+                  <h2 className="font-bold text-xl">{activeExam.title}</h2>
+                  <button onClick={() => { setActiveExam(null); setExamSubmitted(false); setExamAnswers({}); }} className="text-sm text-slate-500">عودة للكورس</button>
+                </div>
+                <div className="space-y-6">
+                  {activeExam.questions.map((q, qIdx) => (
+                    <div key={q.id} className="p-4 rounded-2xl bg-slate-50 border space-y-3">
+                      <p className="font-bold">{qIdx + 1}. {q.text}</p>
+                      <div className="space-y-2">
+                        {q.options.map((opt, oIdx) => {
+                          const isSelected = examAnswers[qIdx] === oIdx;
+                          const isCorrect = q.correctIndex === oIdx;
+                          let style = 'bg-white border-slate-200';
+                          if (examSubmitted) {
+                            if (isCorrect) style = 'bg-emerald-100 border-emerald-500 text-emerald-900 font-bold';
+                            else if (isSelected) style = 'bg-red-100 border-red-500 text-red-900';
+                          } else if (isSelected) style = 'bg-emerald-50 border-emerald-600 font-bold';
+                          return (
+                            <button key={oIdx} disabled={examSubmitted} onClick={() => setExamAnswers({ ...examAnswers, [qIdx]: oIdx })} className={`w-full text-right p-3 rounded-xl border text-sm ${style}`}>
+                              {opt}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {examSubmitted && q.explanation && <p className="text-xs bg-blue-50 text-blue-800 p-3 rounded-xl"><strong>التفسير:</strong> {q.explanation}</p>}
+                    </div>
+                  ))}
+                </div>
+                {!examSubmitted ? (
+                  <button onClick={handleFinishExam} className="mt-6 w-full bg-emerald-600 text-white font-bold py-3.5 rounded-xl">تسليم الإجابات</button>
+                ) : (
+                  <div className="mt-6 p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center font-bold text-emerald-900">تم تسجيل نتيجتك بنجاح!</div>
+                )}
+              </div>
+            ) : selectedCourse ? (
+              <div className="space-y-6">
+                <button onClick={() => { setSelectedCourse(null); setActiveLesson(null); }} className="text-sm font-bold text-emerald-700 hover:underline">← العودة للكورسات</button>
+                <div className="grid md:grid-cols-3 gap-6">
+                  <div className="md:col-span-2">
+                    {activeLesson ? (
+                      <div className="bg-white p-4 rounded-2xl shadow-sm border space-y-4">
+                        <SmartVideoPlayer lesson={activeLesson} />
+                        <div className="flex justify-between items-center">
+                          <h3 className="font-bold text-lg">{activeLesson.title}</h3>
+                          {activeLesson.pdfUrl && <a href={activeLesson.pdfUrl} target="_blank" className="bg-amber-100 text-amber-800 px-3 py-1.5 rounded-xl text-xs font-bold">تحميل PDF</a>}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-white p-12 rounded-2xl border text-center text-slate-400">اختر محاضرة من القائمة لبدء المشاهدة</div>
+                    )}
+                  </div>
+
+                  <div className="bg-white p-5 rounded-2xl shadow-sm border space-y-4 h-fit">
+                    <h3 className="font-bold border-b pb-2">محتوى الكورس</h3>
+                    <div className="space-y-2">
+                      {selectedCourse.lessons.map((lesson, idx) => {
+                        const isEnrolled = (currentStudent.enrolledCourses || []).includes(selectedCourse.id);
+                        const canWatch = isEnrolled || lesson.isPreviewFree || selectedCourse.price === 0;
+                        return (
+                          <button key={lesson.id} onClick={() => canWatch ? setActiveLesson(lesson) : handleEnrollClick(selectedCourse)} className={`w-full flex items-center justify-between p-3 rounded-xl border text-right text-sm ${activeLesson?.id === lesson.id ? 'bg-emerald-50 border-emerald-500 font-bold' : ''}`}>
+                            <span className="flex items-center gap-2">{canWatch ? <IconPlay /> : <IconLock />} {idx + 1}. {lesson.title}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {selectedCourse.exams.length > 0 && (
+                      <>
+                        <h3 className="font-bold border-b pb-2 pt-2">الامتحانات</h3>
+                        {selectedCourse.exams.map(exam => {
+                          const isEnrolled = (currentStudent.enrolledCourses || []).includes(selectedCourse.id) || selectedCourse.price === 0;
+                          return (
+                            <button key={exam.id} onClick={() => isEnrolled ? setActiveExam(exam) : handleEnrollClick(selectedCourse)} className="w-full flex justify-between p-3 rounded-xl border bg-amber-50 text-sm font-bold text-amber-900">
+                              <span>{exam.title}</span>
+                              <span>{exam.questions.length} أسئلة</span>
+                            </button>
+                          );
+                        })}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <h2 className="text-2xl font-extrabold">الكورسات المتاحة</h2>
+                {courses.length === 0 ? (
+                  <div className="bg-white p-16 rounded-3xl border border-dashed text-center text-slate-400">لم يتم نشر أي كورسات بعد.</div>
+                ) : (
+                  <div className="grid md:grid-cols-3 gap-6">
+                    {courses.map(course => {
+                      const isEnrolled = (currentStudent.enrolledCourses || []).includes(course.id);
+                      const isPending = requests.some(r => r.studentId === currentStudent.id && r.courseId === course.id && r.status === 'pending');
+                      return (
+                        <div key={course.id} className="bg-white rounded-3xl shadow-sm border p-6 flex flex-col justify-between space-y-4">
+                          <div>
+                            <div className="flex justify-between mb-3">
+                              <span className="text-xs bg-emerald-50 text-emerald-700 font-bold px-3 py-1 rounded-full">{course.grade}</span>
+                              <span className="text-sm font-extrabold">{course.price === 0 ? 'مجاني' : `${course.price} ج.م`}</span>
+                            </div>
+                            <h3 className="font-bold text-lg mb-2">{course.title}</h3>
+                            <p className="text-xs text-slate-500">{course.description}</p>
+                          </div>
+                          <div className="pt-4 border-t flex gap-2">
+                            <button onClick={() => setSelectedCourse(course)} className="flex-1 bg-slate-100 font-bold py-2.5 rounded-xl text-xs">دخول الكورس</button>
+                            {!isEnrolled && (
+                              <button disabled={isPending} onClick={() => handleEnrollClick(course)} className={`flex-1 font-bold py-2.5 rounded-xl text-xs text-white ${isPending ? 'bg-amber-500' : 'bg-emerald-600'}`}>
+                                {isPending ? 'قيد المراجعة...' : 'اشتراك الآن'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </main>
+
+          {paymentModalCourse && (
+            <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-5 relative">
+                <button onClick={() => setPaymentModalCourse(null)} className="absolute top-4 left-4 text-slate-400 font-bold">✕</button>
+                <h3 className="font-bold text-lg">تفعيل كورس: {paymentModalCourse.title}</h3>
+                
+                <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-200 space-y-2">
+                  <p className="text-xs font-bold text-emerald-900">1. التحويل عبر فودافون كاش / إنستا باي:</p>
+                  <p className="text-lg font-mono font-extrabold text-emerald-700 text-center bg-white py-2 rounded-xl border">{settings.walletNumber}</p>
+                  <p className="text-xs text-slate-600">{settings.paymentInstructions}</p>
+                  <form onSubmit={handleSubmitTransfer} className="pt-2 space-y-2">
+                    <input type="text" required placeholder="اكتب الرقم المحول منه..." value={senderPhone} onChange={e => setSenderPhone(e.target.value)} className="w-full p-2.5 border rounded-xl text-xs bg-white" />
+                    <button type="submit" className="w-full bg-emerald-600 text-white font-bold py-2.5 rounded-xl text-xs">تأكيد إرسال التحويل ({paymentModalCourse.price} ج.م)</button>
+                  </form>
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-2xl border space-y-2">
+                  <p className="text-xs font-bold">2. لديك كود تفعيل من السنتر؟</p>
+                  <form onSubmit={handleRedeemCode} className="flex gap-2">
+                    <input type="text" required placeholder="BIO-XXXXX" value={redeemCodeInput} onChange={e => setRedeemCodeInput(e.target.value)} className="flex-1 p-2.5 border rounded-xl text-xs font-mono uppercase bg-white" />
+                    <button type="submit" className="bg-slate-900 text-white px-4 rounded-xl font-bold text-xs">تفعيل</button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <footer className="bg-white border-t py-4 text-center text-xs text-slate-400 select-none">
+            <span onClick={onFooterSecretClick} className="cursor-default">© 2026 الدكتور في الأحياء — جميع الحقوق محفوظة</span>
+          </footer>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
